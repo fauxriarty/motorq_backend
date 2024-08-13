@@ -13,6 +13,7 @@ type Driver struct {
 	Phone     string         `json:"phone"`
 	Location  string         `json:"location"`
 	WorkHours string         `json:"work_hours"`
+	Status    string         `json:"status"` // "available" or "busy"
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`

@@ -8,7 +8,8 @@ import (
 
 func main() {
 	database.ConnectDatabase()
-	database.DB.AutoMigrate(&models.Driver{}, &models.Vehicle{}, &models.Assignment{})
+
+	database.DB.AutoMigrate(&models.Driver{})
 
 	r := routes.SetupRouter()
 
