@@ -13,22 +13,18 @@ import (
 func CreateDriver(c *gin.Context) {
 	var input models.Driver
 
-	// Log the incoming JSON data
 	log.Println("Incoming Driver Data: ", c.Request.Body)
 
-	// Bind JSON to the struct
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Println("Error binding JSON: ", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Assign a default status if not provided
 	if input.Status == "" {
 		input.Status = "available"
 	}
 
-	// Save the driver to the database
 	if err := database.DB.Create(&input).Error; err != nil {
 		log.Println("Error creating driver: ", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create driver"})
@@ -64,4 +60,38 @@ func SearchDrivers(c *gin.Context) {
 	database.DB.Where("name LIKE ?", "%"+name+"%").Or("phone LIKE ?", "%"+phone+"%").Find(&drivers)
 
 	c.JSON(http.StatusOK, gin.H{"data": drivers})
+}
+
+func GetLastRide(c *gin.Context) {
+	driverID := c.Param("driver_id")
+
+	var lastAssignment models.Assignment
+	err := database.DB.Where("driver_id = ?", driverID).Order("end_time DESC").First(&lastAssignment).Error
+
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"lastRide": "No rides yet"})
+		return
+	}
+
+	var vehicle models.Vehicle
+	database.DB.First(&vehicle, lastAssignment.VehicleID)
+
+	c.JSON(http.StatusOK, gin.H{"lastRide": vehicle.Make + " " + vehicle.Model})
+}
+
+func GetDriverAssignments(c *gin.Context) {
+	driverID := c.Param("driver_id")
+
+	var assignments []models.Assignment
+	if err := database.DB.Where("driver_id = ?", driverID).Find(&assignments).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch assignments"})
+		return
+	}
+
+	if len(assignments) == 0 {
+		c.JSON(http.StatusOK, gin.H{"data": []models.Assignment{}})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": assignments})
 }

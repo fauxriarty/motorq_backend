@@ -47,13 +47,19 @@ func AssignVehicleToDriver(c *gin.Context) {
 		return
 	}
 
-	// Ensure no conflicts with existing assignments
-	var conflictCount int64
-	database.DB.Model(&models.Assignment{}).Where("driver_id = ? AND ((start_time < ? AND end_time > ?) OR (start_time < ? AND end_time > ?))",
-		request.DriverID, endTime, startTime, endTime, startTime).Count(&conflictCount)
+	// Check if the requested time slot is within the driver's working hours
+	if startTime.Hour() < 9 || endTime.Hour() > 17 {
+		c.JSON(http.StatusConflict, gin.H{"error": "Assignment time is outside of driver's working hours"})
+		return
+	}
 
-	if conflictCount > 0 {
-		c.JSON(http.StatusConflict, gin.H{"error": "Driver is already assigned to another vehicle during this time period"})
+	// Ensure no conflicts with existing vehicle assignments
+	var vehicleConflictCount int64
+	database.DB.Model(&models.Assignment{}).Where("vehicle_id = ? AND ((start_time < ? AND end_time > ?) OR (start_time < ? AND end_time > ?))",
+		request.VehicleID, endTime, startTime, endTime, startTime).Count(&vehicleConflictCount)
+
+	if vehicleConflictCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "This vehicle is already booked during this time period"})
 		return
 	}
 
@@ -63,29 +69,11 @@ func AssignVehicleToDriver(c *gin.Context) {
 		VehicleID: request.VehicleID,
 		StartTime: startTime,
 		EndTime:   endTime,
+		Status:    "pending",
 	}
 
 	if err := database.DB.Create(&assignment).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create assignment"})
-		return
-	}
-
-	// Update the vehicle's AssignedDriverID field
-	vehicle.AssignedDriverID = &driver.ID
-	if err := database.DB.Save(&vehicle).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update vehicle's assigned driver"})
-		return
-	}
-
-	// Update driver status if needed
-	if startTime.Before(time.Now()) && endTime.After(time.Now()) {
-		driver.Status = "busy"
-	} else {
-		driver.Status = "available"
-	}
-
-	if err := database.DB.Save(&driver).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update driver status"})
 		return
 	}
 
@@ -94,6 +82,7 @@ func AssignVehicleToDriver(c *gin.Context) {
 
 func UnassignVehicleFromDriver(c *gin.Context) {
 	var input struct {
+		DriverID  uint `json:"driver_id"`
 		VehicleID uint `json:"vehicle_id"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -102,30 +91,13 @@ func UnassignVehicleFromDriver(c *gin.Context) {
 		return
 	}
 
-	var vehicle models.Vehicle
-	if err := database.DB.First(&vehicle, input.VehicleID).Error; err != nil {
-		log.Println("Vehicle not found:", err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "Vehicle not found"})
-		return
-	}
-
-	if vehicle.AssignedDriverID == nil {
-		log.Println("No driver assigned to this vehicle")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No driver assigned to this vehicle"})
-		return
-	}
-
-	// Find the assignment related to this vehicle and driver, and ensure the time slot matches
 	var assignment models.Assignment
-	if err := database.DB.Where("vehicle_id = ? AND driver_id = ?", vehicle.ID, *vehicle.AssignedDriverID).First(&assignment).Error; err != nil {
+	if err := database.DB.Where("vehicle_id = ? AND driver_id = ?", input.VehicleID, input.DriverID).First(&assignment).Error; err != nil {
 		log.Println("Assignment not found:", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Assignment not found"})
 		return
 	}
 
-	log.Println("Assignment Data:", assignment)
-
-	// Perform the deletion
 	if err := database.DB.Delete(&assignment).Error; err != nil {
 		log.Println("Failed to delete assignment:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete assignment"})
@@ -133,26 +105,76 @@ func UnassignVehicleFromDriver(c *gin.Context) {
 	}
 
 	log.Println("Assignment deleted successfully")
+	c.JSON(http.StatusOK, gin.H{"data": "Driver unassigned from vehicle and assignment deleted successfully"})
+}
 
-	// Update the driver status to "available"
-	var driver models.Driver
-	if err := database.DB.First(&driver, *vehicle.AssignedDriverID).Error; err == nil {
-		driver.Status = "available"
-		if err := database.DB.Save(&driver).Error; err != nil {
-			log.Println("Failed to update driver status:", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update driver status"})
-			return
-		}
+func AcceptAssignment(c *gin.Context) {
+	var input struct {
+		DriverID     uint `json:"driver_id"`
+		AssignmentID uint `json:"assignment_id"`
 	}
 
-	// Unassign the driver from the vehicle
-	vehicle.AssignedDriverID = nil
-	if err := database.DB.Save(&vehicle).Error; err != nil {
-		log.Println("Failed to unassign driver from vehicle:", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unassign driver from vehicle"})
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	log.Println("Driver unassigned from vehicle and assignment deleted successfully")
-	c.JSON(http.StatusOK, gin.H{"data": "Driver unassigned from vehicle and assignment deleted successfully"})
+	var assignment models.Assignment
+	if err := database.DB.First(&assignment, input.AssignmentID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Assignment not found"})
+		return
+	}
+
+	// Log the current status before checking for conflicts
+	log.Println("Current assignment status:", assignment.Status)
+
+	if assignment.Status != "pending" {
+		c.JSON(http.StatusConflict, gin.H{"error": "Assignment already accepted or rejected"})
+		return
+	}
+
+	assignment.Status = "accepted"
+	assignment.AcceptedDriverID = &input.DriverID
+
+	if err := database.DB.Save(&assignment).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to accept assignment"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": assignment})
+}
+
+func RejectAssignment(c *gin.Context) {
+	var input struct {
+		DriverID     uint `json:"driver_id"`
+		AssignmentID uint `json:"assignment_id"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var assignment models.Assignment
+	if err := database.DB.First(&assignment, input.AssignmentID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Assignment not found"})
+		return
+	}
+
+	// Log the current status before checking for conflicts
+	log.Println("Current assignment status:", assignment.Status)
+
+	if assignment.Status != "pending" {
+		c.JSON(http.StatusConflict, gin.H{"error": "Assignment already accepted or rejected"})
+		return
+	}
+
+	assignment.Status = "rejected"
+
+	if err := database.DB.Save(&assignment).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reject assignment"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": assignment})
 }
