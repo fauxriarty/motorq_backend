@@ -15,6 +15,7 @@ func SetupRouter() *gin.Engine {
 
 	r.POST("/vehicles", controllers.CreateVehicle)
 	r.GET("/vehicles", controllers.GetVehicles)
+	r.GET("/drivers/:driver_id/assignments", controllers.GetDriverAssignments)
 
 	r.POST("/assignments", controllers.AssignVehicleToDriver)
 	r.POST("/assignments/unassign", controllers.UnassignVehicleFromDriver)

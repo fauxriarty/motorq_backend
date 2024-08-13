@@ -179,3 +179,21 @@ func RejectAssignment(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"data": assignment})
 }
+
+func GetDriverAssignments(c *gin.Context) {
+	driverID := c.Param("driver_id")
+	log.Println("Fetching assignments for Driver ID:", driverID)
+
+	var assignments []models.Assignment
+	if err := database.DB.Where("driver_id = ?", driverID).Find(&assignments).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch assignments"})
+		return
+	}
+
+	if len(assignments) == 0 {
+		c.JSON(http.StatusOK, gin.H{"data": []models.Assignment{}})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": assignments})
+}
