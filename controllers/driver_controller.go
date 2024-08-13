@@ -81,6 +81,7 @@ func GetLastRide(c *gin.Context) {
 
 func GetDriverAssignments(c *gin.Context) {
 	driverID := c.Param("driver_id")
+	log.Println("Fetching assignments for Driver ID:", driverID)
 
 	var assignments []models.Assignment
 	if err := database.DB.Where("driver_id = ?", driverID).Find(&assignments).Error; err != nil {

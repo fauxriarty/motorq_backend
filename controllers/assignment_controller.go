@@ -125,9 +125,6 @@ func AcceptAssignment(c *gin.Context) {
 		return
 	}
 
-	// Log the current status before checking for conflicts
-	log.Println("Current assignment status:", assignment.Status)
-
 	if assignment.Status != "pending" {
 		c.JSON(http.StatusConflict, gin.H{"error": "Assignment already accepted or rejected"})
 		return
@@ -140,6 +137,10 @@ func AcceptAssignment(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to accept assignment"})
 		return
 	}
+
+	database.DB.Model(&models.Assignment{}).Where("vehicle_id = ? AND start_time = ? AND end_time = ? AND id != ?",
+		assignment.VehicleID, assignment.StartTime, assignment.EndTime, assignment.ID).
+		Updates(map[string]interface{}{"status": "rejected"})
 
 	c.JSON(http.StatusOK, gin.H{"data": assignment})
 }
